@@ -1,16 +1,13 @@
 # Civitai Mojibake Parsing
 # sd_prompt_reader/format/civitai.py
 
-import json
-import re
-
+# sd_prompt_reader/format/civitai.py (Conceptual file for your fork)
 
 import json
 import re
-from .base_format import BaseFormat # Assuming BaseFormat is in base_format.py in the same dir
-                                   # or from ..format.base_format if base_format is one level up
-                                   # Adjust based on actual file structure in their project
-from ..logger import Logger # Relative import to get their logger from the parent directory
+# Ensure these imports are correct based on the file structure in stable-diffusion-prompt-reader
+from .base_format import BaseFormat 
+from ..logger import Logger # Assumes logger.py is in the parent directory (sd_prompt_reader/)
 
 class CivitaiComfyUIFormat(BaseFormat):
     """
@@ -22,8 +19,14 @@ class CivitaiComfyUIFormat(BaseFormat):
     """
     def __init__(self, info: dict = None, raw: str = ""):
         super().__init__(info, raw)
-        # Add any specific attributes this parser might need
-        self.workflow_data: dict | None = None # To store the full decoded workflow
+        # --- LOGGER INITIALIZATION ---
+        # Create a named logger for this specific parser.
+        # The name helps in filtering logs if needed.
+        self._logger = Logger(f"{self.__class__.__module__}.{self.__class__.__name__}")
+        # --- END LOGGER INITIALIZATION ---
+        
+        self.workflow_data: dict | None = None 
+        # self._error is already an attribute in BaseFormat, so super().__init__() handles it.
 
     def _decode_civitai_user_comment(self, uc_string: str) -> str | None:
         """
@@ -31,7 +34,9 @@ class CivitaiComfyUIFormat(BaseFormat):
         Handles "charset=Unicode" prefix and mojibake reversal.
         Returns a clean JSON string if successful, else None.
         """
+        self._logger.debug(f"Attempting to decode UserComment string (first 50): {uc_string[:50]}")
         if not uc_string or not isinstance(uc_string, str):
+            self._logger.warn("UserComment string is empty or not a string.")
             return None
 
         data_to_process = uc_string
@@ -39,11 +44,11 @@ class CivitaiComfyUIFormat(BaseFormat):
         match = re.match(prefix_pattern, uc_string, re.IGNORECASE)
         if match:
             data_to_process = uc_string[len(match.group(0)):].strip()
+            self._logger.debug(f"Stripped 'charset=Unicode' prefix. Remaining: {data_to_process[:50]}")
 
-        # Only attempt mojibake reversal if specific characters are present
-        # and it doesn't already look like clean JSON.
         if ('笀' in data_to_process or '∀' in data_to_process or 'izarea' in data_to_process) and \
            not (data_to_process.startswith('{') and data_to_process.endswith('}')):
+            self._logger.debug("Mojibake characters detected. Attempting reversal.")
             try:
                 byte_list = []
                 for char_from_mojibake in data_to_process:
@@ -54,96 +59,103 @@ class CivitaiComfyUIFormat(BaseFormat):
                 recovered_bytes = bytes(byte_list)
                 json_string = recovered_bytes.decode('utf-16le', errors='strict')
                 json.loads(json_string) # Validate
+                self._logger.debug("Mojibake reversal successful.")
                 return json_string
-            except Exception:
-                return None # Mojibake reversal failed
+            except Exception as e:
+                self._logger.warn(f"Mojibake reversal failed: {e}")
+                return None 
         
-        # If no mojibake, check if it's already plain JSON
         if data_to_process.startswith('{') and data_to_process.endswith('}'):
+            self._logger.debug("Data looks like plain JSON. Validating.")
             try:
-                json.loads(data_to_process) # Validate
+                json.loads(data_to_process) 
+                self._logger.debug("Plain JSON validation successful.")
                 return data_to_process
-            except json.JSONDecodeError:
-                return None # Looked like JSON but wasn't valid
+            except json.JSONDecodeError as e:
+                self._logger.warn(f"Plain JSON validation failed: {e}")
+                return None
         
-        return None # Not the expected Civitai JSON format
+        self._logger.debug("UserComment string not recognized as Civitai JSON (mojibake or plain).")
+        return None
 
     def parse(self):
-        # The raw UserComment string is expected in self._raw
+        self._logger.info(f"Attempting to parse using {self.__class__.__name__}.")
         if not self._raw:
-            self.status = BaseFormat.Status.UNREAD # Or FORMAT_ERROR
+            self._logger.warn("Raw data (UserComment) is empty. Cannot parse.")
+            self.status = BaseFormat.Status.FORMAT_ERROR 
+            self._error = "Raw UserComment data is empty."
             return self.status
 
         cleaned_workflow_json_str = self._decode_civitai_user_comment(self._raw)
 
         if not cleaned_workflow_json_str:
+            self._logger.warn("Failed to decode UserComment or not a Civitai JSON format.")
             self.status = BaseFormat.Status.FORMAT_ERROR
-            self._error = "Failed to decode Civitai UserComment or not a Civitai JSON format."
+            self._error = "UserComment decoding failed or not the expected Civitai JSON structure."
             return self.status
 
         try:
             self.workflow_data = json.loads(cleaned_workflow_json_str)
+            self._logger.info("Successfully parsed main workflow JSON from UserComment.")
         except json.JSONDecodeError as e:
+            self._logger.error(f"Decoded UserComment is not valid JSON: {e}")
             self.status = BaseFormat.Status.FORMAT_ERROR
-            self._error = f"Decoded UserComment is not valid JSON: {e}"
+            self._error = f"Invalid JSON in decoded UserComment: {e}"
             return self.status
 
-        # Extract A1111-style parameters from "extraMetadata"
         extra_metadata_str = self.workflow_data.get("extraMetadata")
         if extra_metadata_str and isinstance(extra_metadata_str, str):
+            self._logger.info("Found 'extraMetadata' string. Attempting to parse.")
             try:
                 extra_meta_dict = json.loads(extra_metadata_str)
+                self._logger.debug("'extraMetadata' parsed into dict successfully.")
                 
                 self._positive = extra_meta_dict.get("prompt", "")
                 self._negative = extra_meta_dict.get("negativePrompt", "")
                 
-                # Populate self._parameter dictionary
-                # BaseFormat._parameter is used by sd-prompt-reader to store these
-                # Note: sd-prompt-reader A1111 parser normalizes keys (e.g., "CFG scale" -> "cfg_scale")
-                # You might want to do similar normalization or decide on consistent keys.
-                
-                # Example direct population (keys might need normalization for consistency with other parsers)
+                self._parameter = {} # Ensure it's initialized
                 if "steps" in extra_meta_dict: self._parameter["steps"] = str(extra_meta_dict["steps"])
+                
+                # Handle CFG Scale key variations
                 if "CFG scale" in extra_meta_dict: self._parameter["cfg_scale"] = str(extra_meta_dict["CFG scale"])
                 elif "cfgScale" in extra_meta_dict: self._parameter["cfg_scale"] = str(extra_meta_dict["cfgScale"])
+                
+                # Handle Sampler key variations
                 if "sampler" in extra_meta_dict: self._parameter["sampler_name"] = str(extra_meta_dict["sampler"])
                 elif "sampler_name" in extra_meta_dict: self._parameter["sampler_name"] = str(extra_meta_dict["sampler_name"])
+                
                 if "seed" in extra_meta_dict: self._parameter["seed"] = str(extra_meta_dict["seed"])
                 
-                # Width and Height might be in extraMetadata or from the main workflow's image nodes.
-                # For simplicity, let's assume they might be in extraMetadata for now.
-                # BaseFormat expects self._width and self._height to be set.
+                # BaseFormat expects _width and _height attributes (usually as int, but string here for consistency with _parameter)
                 self._width = str(extra_meta_dict.get("width", 0))
                 self._height = str(extra_meta_dict.get("height", 0))
 
                 # The "setting" string in BaseFormat is usually the raw A1111 settings line.
-                # You could try to reconstruct it from extra_meta_dict if needed, or leave it.
-                # For example:
-                # settings_parts = []
-                # if "steps" in self._parameter: settings_parts.append(f"Steps: {self._parameter['steps']}")
-                # ... etc. ...
-                # self._setting = ", ".join(settings_parts)
-                # Or, more simply, just store the extra_meta_dict as a string if that's useful
-                self._raw_setting = extra_metadata_str # Store the raw extraMetadata string
+                # Here, we can store the extra_metadata_str as the raw settings part.
+                self._raw_setting = extra_metadata_str 
+                # Alternatively, reconstruct a settings string:
+                # settings_parts = [f"{k}: {v}" for k, v in self._parameter.items()]
+                # self._setting = ", ".join(settings_parts) # This would be more like A1111 _setting
 
+                self._logger.info("Successfully extracted parameters from 'extraMetadata'.")
                 self.status = BaseFormat.Status.READ_SUCCESS
                 
             except json.JSONDecodeError as e_extra:
+                self._logger.error(f"Failed to parse JSON from 'extraMetadata': {e_extra}")
                 self.status = BaseFormat.Status.FORMAT_ERROR
-                self._error = f"Failed to parse JSON from 'extraMetadata': {e_extra}"
-                # Still return what we could get from the main workflow if desired, or just error out.
-                # If we error here, the user won't see the main workflow even if it was valid.
-                # A design choice: is partial data okay?
+                self._error = f"Invalid JSON in 'extraMetadata': {e_extra}"
         else:
-            # No extraMetadata, but we have the ComfyUI workflow.
-            # This could be parsed by their existing ComfyUI parser, or you add basic extraction here.
-            # For now, let's say this specific Civitai parser *expects* extraMetadata.
-            # If it's just a plain ComfyUI workflow without extraMetadata, their ComfyUI parser should handle it.
+            self._logger.warn("'extraMetadata' not found or not a string in UserComment workflow.")
+            # If extraMetadata is considered essential for this parser to be a "success"
             self.status = BaseFormat.Status.FORMAT_ERROR 
-            self._error = "Civitai UserComment workflow decoded, but 'extraMetadata' key was missing or not a string."
-            # To be more robust, you could try parsing the main workflow here using ComfyUI logic if extraMetadata is absent.
+            self._error = "'extraMetadata' missing or invalid in Civitai UserComment."
+            # If parsing the main workflow is still useful without extraMetadata,
+            # you might set status to READ_SUCCESS but log a warning.
+            # For a dedicated Civitai parser, extraMetadata is likely key.
 
-        # Store the full decoded workflow in self.raw (as BaseFormat does) or a custom attribute
-        self.raw = cleaned_workflow_json_str # Overwrites self._raw from init if needed by BaseFormat consumers
+        # Store the full decoded workflow in self.raw
+        # BaseFormat's self.raw is usually the primary data string the parser worked on.
+        # Here, cleaned_workflow_json_str is the most "raw" complete data we have successfully processed.
+        self.raw = cleaned_workflow_json_str 
 
         return self.status
