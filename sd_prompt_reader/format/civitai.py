@@ -1,8 +1,16 @@
 # Civitai Mojibake Parsing
+# sd_prompt_reader/format/civitai.py
 
 import json
 import re
-from .base_format import BaseFormat # Assuming BaseFormat is in base_format.py
+
+
+import json
+import re
+from .base_format import BaseFormat # Assuming BaseFormat is in base_format.py in the same dir
+                                   # or from ..format.base_format if base_format is one level up
+                                   # Adjust based on actual file structure in their project
+from ..logger import Logger # Relative import to get their logger from the parent directory
 
 class CivitaiComfyUIFormat(BaseFormat):
     """
