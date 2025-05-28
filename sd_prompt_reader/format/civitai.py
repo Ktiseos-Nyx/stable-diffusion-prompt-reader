@@ -79,30 +79,39 @@ class CivitaiComfyUIFormat(BaseFormat):
         self._logger.debug("UserComment string not recognized as Civitai JSON (mojibake or plain) after processing.")
         return None
 
+    # In sd_prompt_reader/format/civitai.py
+
+# ... (imports and __init__ and _decode_civitai_user_comment are the same as you posted) ...
+# class CivitaiComfyUIFormat(BaseFormat):
+#    def __init__(...):
+#        ...
+#    def _decode_civitai_user_comment(...):
+#        ...
+
     def parse(self):
         self._logger.info(f"Attempting to parse using {self.__class__.__name__}.")
         if not self._raw: # self._raw is the UserComment string from ImageDataReader (via piexif)
             self._logger.warn("Raw data (UserComment) is empty. Cannot parse.")
-            self._status = BaseFormat.Status.FORMAT_ERROR # CORRECTED
+            self._status = BaseFormat.Status.FORMAT_ERROR 
             self._error = "Raw UserComment data is empty."
-            return self._status # CORRECTED
+            return self._status 
 
         cleaned_workflow_json_str = self._decode_civitai_user_comment(self._raw)
 
         if not cleaned_workflow_json_str:
             self._logger.warn("Failed to decode UserComment or not a Civitai JSON format.")
-            self._status = BaseFormat.Status.FORMAT_ERROR # CORRECTED
+            self._status = BaseFormat.Status.FORMAT_ERROR 
             self._error = "UserComment decoding failed or not the expected Civitai JSON structure."
-            return self._status # CORRECTED
+            return self._status 
 
         try:
             self.workflow_data = json.loads(cleaned_workflow_json_str)
             self._logger.info("Successfully parsed main workflow JSON from UserComment.")
         except json.JSONDecodeError as e:
             self._logger.error(f"Decoded UserComment is not valid JSON: {e}")
-            self._status = BaseFormat.Status.FORMAT_ERROR # CORRECTED
+            self._status = BaseFormat.Status.FORMAT_ERROR 
             self._error = f"Invalid JSON in decoded UserComment: {e}"
-            return self._status # CORRECTED
+            return self._status 
 
         extra_metadata_str = self.workflow_data.get("extraMetadata")
         if extra_metadata_str and isinstance(extra_metadata_str, str):
@@ -114,7 +123,7 @@ class CivitaiComfyUIFormat(BaseFormat):
                 self._positive = extra_meta_dict.get("prompt", "")
                 self._negative = extra_meta_dict.get("negativePrompt", "")
                 
-                self._parameter = {} # Ensure it's initialized
+                self._parameter = {} 
                 if "steps" in extra_meta_dict: self._parameter["steps"] = str(extra_meta_dict["steps"])
                 
                 if "CFG scale" in extra_meta_dict: self._parameter["cfg_scale"] = str(extra_meta_dict["CFG scale"])
@@ -125,33 +134,29 @@ class CivitaiComfyUIFormat(BaseFormat):
                 
                 if "seed" in extra_meta_dict: self._parameter["seed"] = str(extra_meta_dict["seed"])
                 
-                # These are expected by BaseFormat properties, often as int, but string for _parameter consistency
-                self._width = str(extra_meta_dict.get("width", getattr(self, "_width", 0))) # Use initial if not in extra
-                self._height = str(extra_meta_dict.get("height", getattr(self, "_height", 0))) # Use initial if not in extra
+                self._width = str(extra_meta_dict.get("width", getattr(self, "_width", 0))) 
+                self._height = str(extra_meta_dict.get("height", getattr(self, "_height", 0))) 
 
-                # Store the raw extraMetadata string as the settings string for now
                 self._raw_setting = extra_metadata_str 
-                # self._setting could be a reconstructed A1111-style string if needed by their tooling
                 
-                # Optional: Populate self.tool if this parser wants to set a more specific name
-                # self.tool = "Civitai ComfyUI Workflow" 
-
                 self._logger.info("Successfully extracted parameters from 'extraMetadata'.")
-                self._status = BaseFormat.Status.READ_SUCCESS # CORRECTED
+                self._status = BaseFormat.Status.READ_SUCCESS 
                 
             except json.JSONDecodeError as e_extra:
                 self._logger.error(f"Failed to parse JSON from 'extraMetadata': {e_extra}")
-                self._status = BaseFormat.Status.FORMAT_ERROR # CORRECTED
+                self._status = BaseFormat.Status.FORMAT_ERROR 
                 self._error = f"Invalid JSON in 'extraMetadata': {e_extra}"
-                # Do not return yet, self.raw is still useful below
+                # Do not return yet, self.raw might still be useful to set below,
+                # but status is error.
         else:
             self._logger.warn("'extraMetadata' not found or not a string in UserComment workflow.")
-            # If extraMetadata is considered essential for THIS parser, mark as format error.
-            # If the main workflow itself is useful data, could be partial success.
-            self._status = BaseFormat.Status.FORMAT_ERROR # CORRECTED
+            self._status = BaseFormat.Status.FORMAT_ERROR 
             self._error = "'extraMetadata' missing or invalid in Civitai UserComment."
 
-        # Store the full decoded workflow in self.raw for access by ImageDataReader.raw property
-        self.raw = cleaned_workflow_json_str 
+        # Store the full decoded workflow in self._raw for access by ImageDataReader.raw property
+        # This should be self._raw as per BaseFormat convention
+        # --- THIS IS THE LINE TO CHANGE ---
+        self._raw = cleaned_workflow_json_str  # CORRECTED: assign to self._raw
+        # --- END OF CHANGE ---
 
-        return self._status # CORRECTED (always return the final status)
+        return self._status # Always return the final status
